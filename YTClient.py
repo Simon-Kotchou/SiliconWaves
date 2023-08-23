@@ -82,6 +82,7 @@ class Music(commands.Cog):
 
     def play_callback(self, ctx, error):
         #Helper function to be used in after param of vc.play
+        loop = ctx.bot.loop
         if error:
             asyncio.create_task(self.handle_playback_error(ctx, error))
         else:
@@ -91,7 +92,7 @@ class Music(commands.Cog):
     async def play(self, ctx, *, url, player=None):
         async with ctx.typing():
             if ctx.voice_client.is_playing() or not self.song_queue.empty():
-                player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
+                player = await YTDLSource.from_url(url, loop=ctx.bot.loop, stream=True)
 
                 await self.song_queue.put((player, url))
                 await ctx.send(f'{player.title} has been added to the queue.')
@@ -117,17 +118,17 @@ class Music(commands.Cog):
                     player, next_url = await self.song_queue.get()
                     async with ctx.typing():
                         if player is None:
-                            player = await YTDLSource.from_url(next_url, loop=self.bot.loop, stream=True)
+                            player = await YTDLSource.from_url(next_url, loop=ctx.bot.loop, stream=True)
 
-                        # Cleanup the previous FFmpeg process if it exists
-                        if ctx.voice_client.source:
-                            try:
-                                ctx.voice_client.source.cleanup()
-                            except Exception as e:
-                                print(f"Error cleaning up FFmpeg process: {e}")
+                        # # Cleanup the previous FFmpeg process if it exists
+                        # if ctx.voice_client.source:
+                        #     try:
+                        #         ctx.voice_client.source.cleanup()
+                        #     except Exception as e:
+                        #         print(f"Error cleaning up FFmpeg process: {e}")
 
                         # Add a small delay before playing the next song
-                        await asyncio.sleep(1)
+                        # await asyncio.sleep(1)
 
                         ctx.voice_client.play(player, after=lambda e: self.play_callback(ctx, e))
 
@@ -153,27 +154,28 @@ class Music(commands.Cog):
                 return
 
             async def download_song():
-                try:
-                    async with ctx.typing():
-                        player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
+                # try:
+                async with ctx.typing():
+                    player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
 
-                        await self.song_queue.put((player, url))
-                        await ctx.send(f'{player.title} has been added to the queue.')
-                except Exception as e:
-                    await ctx.send(f"An error occurred while downloading the song: {e}")
-                    logging.error(f"Error downloading song from URL {url}: {e}")
-            
-            self.bot.loop.create_task(download_song())
+                    await self.song_queue.put((player, url))
+                    await ctx.send(f'{player.title} has been added to the queue.')
+                # except Exception as e:
+                #     await ctx.send(f"An error occurred while downloading the song: {e}")
+                #     logging.error(f"Error downloading song from URL {url}: {e}")
+
+            loop = ctx.bot.loop
+            loop.create_task(download_song())
 
             if not ctx.voice_client.is_playing():
-                self.bot.loop.create_task(self.play_next(ctx))
+                loop.create_task(self.play_next(ctx))
 
     @commands.command(description="skip the current song")
     async def skip(self, ctx):
         ctx.voice_client.stop()
         if not self.song_queue.empty():
             await ctx.send(f'Skipping current song {self.current_song}')
-            self.bot.loop.create_task(self.play_next(ctx))
+            ctx.bot.loop.create_task(self.play_next(ctx))
         else:
             await ctx.send("No more songs in the queue")
 
