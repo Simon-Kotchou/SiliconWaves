@@ -2,6 +2,7 @@ import discord
 import youtube_dl
 import asyncio
 from discord.ext import commands 
+from discord.errors import ClientException
 import sqlite3
 import json
 import urllib
@@ -19,20 +20,21 @@ youtube_dl.utils.bug_reports_message = lambda: ''
 
 ytdl_config = {
     'format': 'bestaudio/best',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'outtmpl': 'downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
-    'quiet': False,
+    'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
 }
 
 ffmpeg_config = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn -bufsize 512k'
+    'before_options': '-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn -bufsize 512k'
 }
 
 yt_client = youtube_dl.YoutubeDL(ytdl_config)
@@ -79,7 +81,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         else:
             return {'webpage_url': data['webpage_url'], 'requester': ctx.author, 'title': data['title']}
 
-        return cls(discord.FFmpegPCMAudio(source), data=data, requester=ctx.author)
+        return cls(discord.FFmpegPCMAudio(source, **ffmpeg_config), data=data, requester=ctx.author)
 
     @classmethod
     async def regather_stream(cls, data, *, loop):
@@ -91,7 +93,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         to_run = partial(yt_client.extract_info, url=data['webpage_url'], download=False)
         data = await loop.run_in_executor(None, to_run)
 
-        return cls(discord.FFmpegPCMAudio(data['url']), data=data, requester=requester)
+        return cls(discord.FFmpegPCMAudio(data['url'], **ffmpeg_config), data=data, requester=requester)
     
 
 class MusicPlayer:
@@ -137,7 +139,7 @@ class MusicPlayer:
             self.current_song = source.title
 
             self._guild.voice_client.play(source, after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set))
-            await self.add_to_db(source.title, str(source.web_url), source.requester)
+            await self.add_to_db(str(source.title), str(source.web_url), str(source.requester.display_name))
             art_url = await self.get_album_art_spotify(source.title)
             embed = discord.Embed(title=f"Now playing: {source.title}")
             if art_url:
@@ -146,13 +148,11 @@ class MusicPlayer:
             await self.next.wait()
 
             # Make sure the FFmpeg process is cleaned up.
-            source.cleanup()
-            self.current = None
-
-            try:
-                await self.np.delete()
-            except discord.HTTPException:
-                pass
+            # try:
+            #     source.cleanup()
+            # except ClientException:
+            #     pass
+            self.current_song = None
     
     async def create_table(self):
         conn = sqlite3.connect(f"{self._guild}_music.db")
@@ -173,7 +173,7 @@ class MusicPlayer:
     async def get_past_songs(self, limit):
         conn = sqlite3.connect(f'{self._guild}_music.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT title, url FROM music ORDER BY id DESC LIMIT ?", (limit,))
+        cursor.execute("SELECT title, url, user, timestamp FROM music ORDER BY id DESC LIMIT ?", (limit,))
         past_songs = cursor.fetchall()
         conn.close()
         return past_songs
@@ -187,7 +187,7 @@ class MusicPlayer:
             "Content-Type": "application/json",
         }
 
-        # Get the past 10 songs played from the database
+        # Get the past 5 songs played from the database
         past_songs = await self.get_past_songs(5)
         if not past_songs:
             return None
@@ -498,7 +498,7 @@ class Music(commands.Cog):
     async def recent_(self, ctx):
         async with ctx.typing():
             player = self.get_player(ctx)
-            recent_songs = player.get_past_songs(5)
+            recent_songs = await player.get_past_songs(5)
             for i, row in enumerate(recent_songs):
                 await ctx.send(f"{i+1}. {row[0]} - {row[1]} - {row[2]} - {row[3]}")
 

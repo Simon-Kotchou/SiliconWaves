@@ -10,5 +10,5 @@ if __name__ == "__main__":
     @bot.event
     async def on_ready():
         await setup_yt_client(bot)
-    token = os.getenv('DISCORD_TOKEN')
+    token = os.getenv("DISCORD_TOKEN")
     bot.run(token)
